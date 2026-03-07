@@ -25,6 +25,8 @@ Add it to your `.gitignore` file:
 ```gitignore
 server.key
 ```
+⚠️ The `server.key` file is excluded for security reasons.
+Generate your own SSL certificate before running the server.
 
 ---
 
@@ -113,3 +115,4 @@ project-root/
 Private keys must **never be exposed in public repositories**.
 
 Always include `server.key` in `.gitignore`.
+
