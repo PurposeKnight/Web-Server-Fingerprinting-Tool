@@ -3,42 +3,57 @@ import ssl
 import threading
 
 
-HOST = '127.0.0.1'
+HOST = '0.0.0.0'  
 PORT = 8443
 CERT_FILE = 'server.crt'
 KEY_FILE = 'server.key'
 
-def grab_banner(target_ip, target_port):
-    """Low-level socket connection to grab HTTP/FTP banners."""
+def grab_banner(target_ip, port):
+    """Connects to the target, handles specific protocols, and extracts the banner."""
     try:
+        # Create a raw, unencrypted socket for the outbound target connection
+        target_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(3)
+        # OPTIMIZATION: Set a 5-second timeout so dead IPs don't freeze the server
+        target_socket.settimeout(5.0) 
         
-        
-        if target_port == 443:
-            context = ssl.create_default_context()
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
-            s = context.wrap_socket(s, server_hostname=target_ip)
+        # Connect to the target
+        target_socket.connect((target_ip, port))
 
-        s.connect((target_ip, target_port))
-        
-        
-        request = f"GET / HTTP/1.1\r\nHost: {target_ip}\r\nUser-Agent: FingerprintTool/1.0\r\n\r\n"
-        s.sendall(request.encode())
-        
-        response = s.recv(4096).decode(errors='ignore')
-        s.close()
+        # --- PROTOCOL: FTP (Port 21) ---
+        if port == 21:
+            # FTP sends the banner immediately upon connection
+            banner = target_socket.recv(1024).decode('utf-8', errors='ignore').strip()
+            target_socket.close()
+            # Grab the first line of the FTP welcome message
+            first_line = banner.split('\n')[0] if banner else "No FTP banner returned."
+            return f"FTP Service -> {first_line}"
 
-        
-        for line in response.split('\n'):
-            if line.lower().startswith('server:'):
-                return line.strip()
-        
-        return "Server header not found."
+        # --- PROTOCOL: HTTP/HTTPS (Port 80/443) ---
+        elif port in [80, 443]:
+            # HTTP requires us to ask for the page first
+            request = f"GET / HTTP/1.1\r\nHost: {target_ip}\r\n\r\n"
+            target_socket.sendall(request.encode())
+            
+            response = target_socket.recv(4096).decode('utf-8', errors='ignore')
+            target_socket.close()
+            
+            # Scan for the "Server:" header
+            for line in response.split('\n'):
+                if line.lower().startswith('server:'):
+                    return line.strip()
+            return "HTTP Server header not found in response."
+
+        # --- PROTOCOL: Generic (Any other port) ---
+        else:
+            banner = target_socket.recv(1024).decode('utf-8', errors='ignore').strip()
+            target_socket.close()
+            return f"Generic Banner -> {banner[:50]}..." # Return first 50 chars
+
+    except socket.timeout:
+        return f"[Error] Connection to {target_ip}:{port} timed out."
     except Exception as e:
-        return f"Error connecting to {target_ip}:{target_port} - {str(e)}"
+        return f"[Error] Could not grab banner: {str(e)}"
 
 def handle_client(conn, addr):
     """Handles an individual client connection concurrently."""
